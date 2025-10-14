@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gradient Boosting Animation</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+        }
+        canvas {
+            border: 1px solid #ccc;
+            background-color: white;
+        }
+        .controls {
+            margin-top: 20px;
+            display: flex;
+            gap: 20px;
+            align-items: center;
+        }
+        label {
+            margin-right: 10px;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="myCanvas" width="800" height="600"></canvas>
+    <div class="controls">
+        <div>
+            <label for="treeSlider">Number of Trees: <span id="treeValue">0</span></label>
+            <input type="range" id="treeSlider" min="0" max="50" value="0">
+        </div>
+        <div>
+            <label for="learningRate">Learning Rate:</label>
+            <select id="learningRate">
+                <option value="0.01">0.01</option>
+                <option value="0.05" selected>0.05</option>
+                <option value="0.1">0.1</option>
+                <option value="0.2">0.2</option>
+            </select>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('myCanvas');
+        const ctx = canvas.getContext('2d');
+        const treeSlider = document.getElementById('treeSlider');
+        const treeValue = document.getElementById('treeValue');
+        const learningRate = document.getElementById('learningRate');
+
+        // Canvas dimensions
+        const width = canvas.width;
+        const height = canvas.height;
+
+        // Scale factors
+        const scaleX = width / 20; // x from -10 to 10
+        const scaleY = height / 2200; // y from -1100 to 1100 roughly
+
+        // Function to transform coordinates
+        function toCanvas(x, y) {
+            const cx = (x + 10) * scaleX;
+            const cy = height - (y + 1100) * scaleY;
+            return { cx, cy };
+        }
+
+        // Utility function
+        function avg(arr) {
+            return arr.reduce((s, v) => s + v, 0) / arr.length;
+        }
+
+        // Simple Tree for regression (stump)
+        class SimpleTree {
+            fit(X, y) {
+                // Find best split
+                const splits = [...new Set(X)].sort();
+                let bestSplit = null;
+                let bestMSE = Infinity;
+                for (let i = 1; i < splits.length; i++) {
+                    const split = splits[i];
+                    const left = [];
+                    const right = [];
+                    for (let j = 0; j < X.length; j++) {
+                        if (X[j] < split) left.push(y[j]);
+                        else right.push(y[j]);
+                    }
+                    if (left.length && right.length) {
+                        const mse = left.reduce((s, v) => s + Math.pow(v - avg(left), 2), 0) / left.length +
+                                    right.reduce((s, v) => s + Math.pow(v - avg(right), 2), 0) / right.length;
+                        if (mse < bestMSE) {
+                            bestMSE = mse;
+                            bestSplit = split;
+                        }
+                    }
+                }
+                this.split = bestSplit;
+                // Compute means
+                const left = [];
+                const right = [];
+                for (let j = 0; j < X.length; j++) {
+                    if (X[j] < this.split) left.push(y[j]);
+                    else right.push(y[j]);
+                }
+                this.leftMean = avg(left);
+                this.rightMean = avg(right);
+            }
+
+            predict(x) {
+                return x < this.split ? this.leftMean : this.rightMean;
+            }
+        }
+
+        // Gradient Boosting
+        function gradientBoost(X, y, nTrees, learningRate) {
+            const trees = [];
+            const predictions = new Array(X.length).fill(avg(y));
+            for (let t = 0; t < nTrees; t++) {
+                const residuals = y.map((yi, i) => yi - predictions[i]);
+                const tree = new SimpleTree();
+                tree.fit(X, residuals);
+                trees.push(tree);
+                for (let i = 0; i < X.length; i++) {
+                    predictions[i] += learningRate * tree.predict(X[i]);
+                }
+            }
+            return { trees, initial: avg(y) };
+        }
+
+        // Predict with model
+        function predict(model, x) {
+            let pred = model.initial;
+            for (const tree of model.trees) {
+                pred += tree.predict(x);
+            }
+            return pred;
+        }
+
+        // Generate points
+        const points = [];
+        for (let i = 0; i < 200; i++) {
+            const x = (Math.random() - 0.5) * 20; // x from -10 to 10
+            const yTrue = Math.pow(x, 3);
+            const noise = (Math.random() - 0.5) * 50; // noise range
+            const y = yTrue + noise;
+            points.push({ x, y });
+        }
+        const X = points.map(p => p.x);
+        const Y = points.map(p => p.y);
+
+        let model = gradientBoost(X, Y, 0, 0.05);
+
+        // Plot points
+        function plotPoints() {
+            ctx.fillStyle = 'blue';
+            points.forEach(point => {
+                const { cx, cy } = toCanvas(point.x, point.y);
+                ctx.beginPath();
+                ctx.arc(cx, cy, 2, 0, 2 * Math.PI);
+                ctx.fill();
+            });
+        }
+
+        // Plot line
+        function plotLine(model) {
+            ctx.strokeStyle = 'red';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            let first = true;
+            for (let x = -10; x <= 10; x += 0.1) {
+                const y = predict(model, x);
+                const { cx, cy } = toCanvas(x, y);
+                if (first) {
+                    ctx.moveTo(cx, cy);
+                    first = false;
+                } else {
+                    ctx.lineTo(cx, cy);
+                }
+            }
+            ctx.stroke();
+        }
+
+        // Plot everything
+        function plot() {
+            ctx.clearRect(0, 0, width, height);
+            plotPoints();
+            plotLine(model);
+        }
+
+        // Update model
+        function updateModel() {
+            const nTrees = parseInt(treeSlider.value);
+            const lr = parseFloat(learningRate.value);
+            model = gradientBoost(X, Y, nTrees, lr);
+            plot();
+        }
+
+        // Event listeners
+        treeSlider.addEventListener('input', () => {
+            treeValue.textContent = treeSlider.value;
+            updateModel();
+        });
+        learningRate.addEventListener('change', updateModel);
+
+        // Initial plot
+        plot();
+    </script>
+</body>
+</html>
